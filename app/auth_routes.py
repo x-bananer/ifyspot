@@ -5,13 +5,12 @@ from urllib.parse import urlencode
 import httpx
 import secrets
 import base64
+from app.crud.user import create_or_update
+from app.database import SessionLocal
 
 from app.config import SPOTIFY_CLIENT_ID
 from app.config import SPOTIFY_CLIENT_SECRET
 from app.config import SPOTIFY_REDIRECT_URI
-
-import os
-print("FROM os.environ:", os.environ.get('SPOTIFY_CLIENT_ID'))
 
 router = APIRouter()
 
@@ -19,7 +18,7 @@ router = APIRouter()
 def login():
     scope = 'user-read-email  playlist-read-private'
     state = secrets.token_urlsafe(16)
-    print(SPOTIFY_CLIENT_ID)
+
     params = {
         'response_type': 'code',
         'client_id': SPOTIFY_CLIENT_ID,
@@ -38,7 +37,7 @@ async def callback(request: Request):
     if not code:
         return {
             'error': {
-                'status': 404,
+                'status': 400,
                 'message': 'No \'code\' parameter provided'
             }
         }
@@ -67,9 +66,9 @@ async def callback(request: Request):
         )
     
     token_data = response.json()
-    print(token_data)
     
     access_token = token_data.get('access_token')
+    refresh_token = token_data.get('refresh_token')
 
     if not access_token:
         return {
@@ -89,6 +88,24 @@ async def callback(request: Request):
             headers=user_headers
         )
 
-    user_data = user_response.json()
-    print(user_data)
-    return user_data
+    spotify_user_data = user_response.json()
+
+    db = SessionLocal()
+    db_user_data = {
+        'spotify_id': spotify_user_data.get('id'),
+        'display_name': spotify_user_data.get('display_name'),
+        'email': spotify_user_data.get('email'),
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+    }
+
+    user = create_or_update(db, db_user_data)
+    db.close()
+
+    return {
+        'id': user.id,
+        'spotify_id': db_user_data['spotify_id'],
+        'display_name': db_user_data['display_name'],
+        'email': db_user_data['email'],
+        'token': f'Bearer {access_token}',
+    }
